@@ -19,23 +19,27 @@ import RotateIcon from "./icon/RotateIcon";
 import TypeIcon from "./icon/TypeIcon";
 import TypographyIcon from "./icon/TypographyIcon";
 import UploadIcon from "./icon/UploadIcon";
+import {
+  type EdgeZone,
+  edgeCursor,
+  findEdgeZone,
+  getDownloadFileName,
+  getEffectiveWatermarkSpacing,
+  getImageFileValidationError,
+  getScaleFactor,
+  pointInRect,
+  pointOnDeleteHandle,
+  pointOnRotationHandle,
+  type RedactionRect,
+  resizeRect,
+  scaleWatermarkSettings,
+  screenToCanvas,
+  type WatermarkSettings,
+  wrapWatermarkText,
+} from "./imageLogic";
+import { renderWatermarkedImage } from "./rendering/watermarkRenderer";
 
 declare const __COMMIT_HASH__: string;
-
-type WatermarkSettings = {
-  text: string;
-  angle: number;
-  opacity: number;
-  fontSize: number;
-  spacingX: number;
-  spacingY: number;
-  color: string;
-  grayscale: boolean;
-  offsetX: number;
-  offsetY: number;
-  lineGap: number;
-  stagger: number;
-};
 
 type Preset = {
   title: string;
@@ -52,20 +56,8 @@ type Notice = {
 
 type PreviewMode = "original" | "watermarked";
 
-type RedactionRect = {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  angle: number;
-};
-
 type InteractionMode = "idle" | "drawing" | "moving" | "rotating" | "resizing";
-type EdgeZone = "top" | "bottom" | "left" | "right";
 type HitZone = "handle" | "delete" | EdgeZone | "body";
-
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
-const REFERENCE_DIAGONAL = 1000;
 
 const watermarkPreset: Preset = {
   title: "Document Watermark",
@@ -263,19 +255,18 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
 
   const scaleFactor = useMemo(() => {
     if (!loadedImage) return 1;
-    const diag = Math.sqrt(
-      loadedImage.naturalWidth ** 2 + loadedImage.naturalHeight ** 2,
-    );
-    return diag / REFERENCE_DIAGONAL;
+    return getScaleFactor(loadedImage.naturalWidth, loadedImage.naturalHeight);
   }, [loadedImage]);
 
-  const scaledFontSize = settings.fontSize * scaleFactor;
-  const scaledSpacingX = settings.spacingX * scaleFactor;
-  const scaledSpacingY = settings.spacingY * scaleFactor;
-  const scaledLineGap = settings.lineGap * scaleFactor;
-  const scaledOffsetX = settings.offsetX * scaleFactor;
-  const scaledOffsetY = settings.offsetY * scaleFactor;
-  const scaledStagger = settings.stagger * scaleFactor;
+  const {
+    fontSize: scaledFontSize,
+    spacingX: scaledSpacingX,
+    spacingY: scaledSpacingY,
+    lineGap: scaledLineGap,
+    offsetX: scaledOffsetX,
+    offsetY: scaledOffsetY,
+    stagger: scaledStagger,
+  } = scaleWatermarkSettings(settings, scaleFactor);
 
   const fontString = useMemo(
     () =>
@@ -301,43 +292,31 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
 
     ctx.font = fontString;
 
-    const words = text.split(/\s+/);
-    const wrappedLines: string[] = [];
-    let currentLine = "";
-
-    for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      if (ctx.measureText(testLine).width > maxLineWidth && currentLine) {
-        wrappedLines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-    }
-    if (currentLine) wrappedLines.push(currentLine);
-
-    const measuredWidth = wrappedLines.reduce(
-      (max, line) => Math.max(max, ctx.measureText(line).width),
-      0,
+    return wrapWatermarkText(
+      text,
+      maxLineWidth,
+      (line) => ctx.measureText(line).width,
     );
-
-    return { lines: wrappedLines, textWidth: measuredWidth };
   }, [settings.text, fontString, maxLineWidth, scaledFontSize]);
 
-  const verticalSpan = useMemo(() => {
-    if (lines.length === 0) return scaledFontSize;
-    const lineHeight = scaledFontSize + scaledLineGap;
-    return lineHeight * lines.length;
-  }, [lines.length, scaledFontSize, scaledLineGap]);
-
-  const effectiveSpacingX = useMemo(
-    () => Math.max(scaledSpacingX, textWidth + scaledFontSize * 0.6),
-    [scaledSpacingX, textWidth, scaledFontSize],
-  );
-
-  const effectiveSpacingY = useMemo(
-    () => Math.max(scaledSpacingY, verticalSpan + scaledFontSize * 0.6),
-    [scaledSpacingY, verticalSpan, scaledFontSize],
+  const { spacingX: effectiveSpacingX, spacingY: effectiveSpacingY } = useMemo(
+    () =>
+      getEffectiveWatermarkSpacing(
+        lines,
+        textWidth,
+        scaledFontSize,
+        scaledSpacingX,
+        scaledSpacingY,
+        scaledLineGap,
+      ),
+    [
+      lines,
+      scaledFontSize,
+      scaledLineGap,
+      scaledSpacingX,
+      scaledSpacingY,
+      textWidth,
+    ],
   );
 
   const imageStats = useMemo(() => {
@@ -346,120 +325,22 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   }, [loadedImage]);
 
   const downloadFileName = useMemo(() => {
-    if (!fileName) return preset.downloadName;
-    const extensionIndex = fileName.lastIndexOf(".");
-    const baseName =
-      extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
-    return `${baseName}-kyc-watermarked.png`;
+    return getDownloadFileName(fileName, preset.downloadName);
   }, [fileName, preset.downloadName]);
 
-  const screenToCanvas = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasPoint = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const canvasAspect = canvas.width / canvas.height;
-    const cssAspect = rect.width / rect.height;
-
-    let renderWidth: number,
-      renderHeight: number,
-      offsetX: number,
-      offsetY: number;
-    if (canvasAspect > cssAspect) {
-      renderWidth = rect.width;
-      renderHeight = rect.width / canvasAspect;
-      offsetX = 0;
-      offsetY = (rect.height - renderHeight) / 2;
-    } else {
-      renderHeight = rect.height;
-      renderWidth = rect.height * canvasAspect;
-      offsetX = (rect.width - renderWidth) / 2;
-      offsetY = 0;
-    }
-
-    return {
-      x: ((e.clientX - rect.left - offsetX) / renderWidth) * canvas.width,
-      y: ((e.clientY - rect.top - offsetY) / renderHeight) * canvas.height,
-    };
+    return screenToCanvas({ x: e.clientX, y: e.clientY }, canvas, {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    });
   };
 
   // --- Hit-testing helpers ---
-
-  const toLocal = (px: number, py: number, r: RedactionRect) => {
-    const cx = r.x + r.w / 2;
-    const cy = r.y + r.h / 2;
-    const cos = Math.cos(-r.angle);
-    const sin = Math.sin(-r.angle);
-    const dx = px - cx;
-    const dy = py - cy;
-    return { lx: dx * cos - dy * sin, ly: dx * sin + dy * cos };
-  };
-
-  const pointInRect = (px: number, py: number, r: RedactionRect) => {
-    const { lx, ly } = toLocal(px, py, r);
-    return Math.abs(lx) <= r.w / 2 && Math.abs(ly) <= r.h / 2;
-  };
-
-  const pointOnHandle = (
-    px: number,
-    py: number,
-    r: RedactionRect,
-    sf: number,
-  ) => {
-    const cx = r.x + r.w / 2;
-    const cy = r.y + r.h / 2;
-    const dist = r.h / 2 + 20 * sf;
-    const hx = cx + dist * Math.sin(r.angle);
-    const hy = cy - dist * Math.cos(r.angle);
-    const hitRadius = 12 * sf;
-    return (px - hx) ** 2 + (py - hy) ** 2 <= hitRadius ** 2;
-  };
-
-  const pointOnDeleteHandle = (
-    px: number,
-    py: number,
-    r: RedactionRect,
-    sf: number,
-  ) => {
-    const cx = r.x + r.w / 2;
-    const cy = r.y + r.h / 2;
-    const dist = r.h / 2 + 20 * sf;
-    const hx = cx - dist * Math.sin(r.angle);
-    const hy = cy + dist * Math.cos(r.angle);
-    const hitRadius = 12 * sf;
-    return (px - hx) ** 2 + (py - hy) ** 2 <= hitRadius ** 2;
-  };
-
-  const findEdgeZone = (
-    px: number,
-    py: number,
-    r: RedactionRect,
-    sf: number,
-  ): EdgeZone | null => {
-    const { lx, ly } = toLocal(px, py, r);
-    const threshold = 8 * sf;
-    const hw = r.w / 2;
-    const hh = r.h / 2;
-    if (Math.abs(lx) > hw + threshold || Math.abs(ly) > hh + threshold)
-      return null;
-    const dTop = Math.abs(ly + hh);
-    const dBottom = Math.abs(ly - hh);
-    const dLeft = Math.abs(lx + hw);
-    const dRight = Math.abs(lx - hw);
-    const min = Math.min(dTop, dBottom, dLeft, dRight);
-    if (min > threshold) return null;
-    if (min === dTop) return "top";
-    if (min === dBottom) return "bottom";
-    if (min === dLeft) return "left";
-    return "right";
-  };
-
-  const edgeCursor = (edge: EdgeZone, angle: number): string => {
-    const resizeAngle =
-      edge === "top" || edge === "bottom" ? Math.PI / 2 + angle : angle;
-    const norm = ((resizeAngle % Math.PI) + Math.PI) % Math.PI;
-    const sector = Math.round(norm / (Math.PI / 4)) % 4;
-    return ["ew-resize", "nwse-resize", "ns-resize", "nesw-resize"][sector];
-  };
 
   const findHitTarget = (
     px: number,
@@ -467,7 +348,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   ): { index: number; zone: HitZone } | null => {
     if (selectedIndex !== null && selectedIndex < redactions.length) {
       const r = redactions[selectedIndex];
-      if (pointOnHandle(px, py, r, scaleFactor)) {
+      if (pointOnRotationHandle(px, py, r, scaleFactor)) {
         return { index: selectedIndex, zone: "handle" };
       }
       if (pointOnDeleteHandle(px, py, r, scaleFactor)) {
@@ -486,60 +367,13 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     return null;
   };
 
-  const resizeRect = (
-    snap: RedactionRect,
-    pos: { x: number; y: number },
-    edge: EdgeZone,
-  ): RedactionRect => {
-    const snapCx = snap.x + snap.w / 2;
-    const snapCy = snap.y + snap.h / 2;
-    const { lx, ly } = toLocal(pos.x, pos.y, snap);
-    const minSize = 6;
-
-    let newW = snap.w,
-      newH = snap.h,
-      shiftX = 0,
-      shiftY = 0;
-
-    if (edge === "right") {
-      const moved = Math.max(lx, -snap.w / 2 + minSize);
-      newW = moved + snap.w / 2;
-      shiftX = (moved - snap.w / 2) / 2;
-    } else if (edge === "left") {
-      const moved = Math.min(lx, snap.w / 2 - minSize);
-      newW = snap.w / 2 - moved;
-      shiftX = (moved + snap.w / 2) / 2;
-    } else if (edge === "bottom") {
-      const moved = Math.max(ly, -snap.h / 2 + minSize);
-      newH = moved + snap.h / 2;
-      shiftY = (moved - snap.h / 2) / 2;
-    } else {
-      const moved = Math.min(ly, snap.h / 2 - minSize);
-      newH = snap.h / 2 - moved;
-      shiftY = (moved + snap.h / 2) / 2;
-    }
-
-    const cosA = Math.cos(snap.angle);
-    const sinA = Math.sin(snap.angle);
-    const newCx = snapCx + shiftX * cosA - shiftY * sinA;
-    const newCy = snapCy + shiftX * sinA + shiftY * cosA;
-
-    return {
-      x: newCx - newW / 2,
-      y: newCy - newH / 2,
-      w: newW,
-      h: newH,
-      angle: snap.angle,
-    };
-  };
-
   // --- Mouse handlers ---
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!redactEnabled || !loadedImage) return;
     e.preventDefault();
     e.stopPropagation();
-    const pos = screenToCanvas(e);
+    const pos = getCanvasPoint(e);
     const hit = findHitTarget(pos.x, pos.y);
 
     if (hit?.zone === "delete") {
@@ -581,7 +415,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     const canvas = canvasRef.current;
     if (!canvas || !redactEnabled || !loadedImage) return;
 
-    const pos = screenToCanvas(e);
+    const pos = getCanvasPoint(e);
 
     if (interactionMode.current === "idle") {
       const hit = findHitTarget(pos.x, pos.y);
@@ -662,7 +496,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     e.stopPropagation();
 
     if (mode === "drawing") {
-      const pos = screenToCanvas(e);
+      const pos = getCanvasPoint(e);
       const start = dragStart.current;
       const finalRect: RedactionRect = {
         x: Math.min(start.x, pos.x),
@@ -752,74 +586,28 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       canvas.width = loadedImage.naturalWidth;
       canvas.height = loadedImage.naturalHeight;
 
-      // Layer 1: Source image
-      context.save();
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.filter =
-        previewMode === "watermarked" && settings.grayscale
-          ? "grayscale(100%)"
-          : "none";
-      context.drawImage(loadedImage, 0, 0, canvas.width, canvas.height);
-      context.restore();
+      const allRects = activeRect ? [...redactions, activeRect] : redactions;
+      renderWatermarkedImage(context, loadedImage, {
+        width: canvas.width,
+        height: canvas.height,
+        watermarked: previewMode === "watermarked",
+        grayscale: settings.grayscale,
+        redactions: allRects,
+        lines,
+        opacity: settings.opacity,
+        color: settings.color,
+        font: fontString,
+        angleDegrees: settings.angle,
+        offsetX: scaledOffsetX,
+        offsetY: scaledOffsetY,
+        spacingX: effectiveSpacingX,
+        spacingY: effectiveSpacingY,
+        fontSize: scaledFontSize,
+        lineGap: scaledLineGap,
+        stagger: scaledStagger,
+      });
 
       if (previewMode !== "watermarked") return;
-
-      // Layer 2: Redaction rectangles (rotated)
-      const allRects = activeRect ? [...redactions, activeRect] : redactions;
-      for (const r of allRects) {
-        context.save();
-        const cx = r.x + r.w / 2;
-        const cy = r.y + r.h / 2;
-        context.translate(cx, cy);
-        context.rotate(r.angle);
-        context.fillStyle = "#000000";
-        context.fillRect(-r.w / 2, -r.h / 2, r.w, r.h);
-        context.restore();
-      }
-
-      // Layer 3: Watermark text
-      if (lines.length > 0 && settings.opacity > 0) {
-        context.save();
-        context.globalAlpha = settings.opacity;
-        context.fillStyle = settings.color;
-        context.font = fontString;
-        context.textAlign = "center";
-        context.textBaseline = "middle";
-
-        context.translate(
-          canvas.width / 2 + scaledOffsetX,
-          canvas.height / 2 + scaledOffsetY,
-        );
-        context.rotate((Math.PI / 180) * settings.angle);
-
-        const diagonal = Math.sqrt(
-          canvas.width * canvas.width + canvas.height * canvas.height,
-        );
-        const lineHeight = scaledFontSize + scaledLineGap;
-        const rows: number[] = [];
-
-        for (let y = -diagonal; y <= diagonal; y += effectiveSpacingY) {
-          rows.push(y);
-        }
-
-        const centerRowIndex = Math.floor(rows.length / 2);
-
-        rows.forEach((y, rowIndex) => {
-          const rowOffset = (rowIndex - centerRowIndex) * scaledStagger;
-
-          for (
-            let x = -diagonal + rowOffset - effectiveSpacingX;
-            x <= diagonal + effectiveSpacingX;
-            x += effectiveSpacingX
-          ) {
-            lines.forEach((line, lineIndex) => {
-              context.fillText(line, x, y + lineIndex * lineHeight);
-            });
-          }
-        });
-
-        context.restore();
-      }
 
       // Layer 4: Selection UI overlay (not exported)
       if (
@@ -927,18 +715,11 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   const loadImageFile = (file: File | undefined) => {
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
+    const validationError = getImageFileValidationError(file);
+    if (validationError) {
       setNotice({
         tone: "error",
-        message: "Please drop a valid image file (PNG, JPG, WebP, HEIC).",
-      });
-      return;
-    }
-
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      setNotice({
-        tone: "error",
-        message: "Image is too large. Keep files under 20MB.",
+        message: validationError,
       });
       return;
     }

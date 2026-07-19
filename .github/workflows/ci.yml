@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test, lint, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit and golden rendering tests
+        run: pnpm test
+
+      - name: Upload failed golden renderings
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: golden-rendering-failures
+          path: tests/artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Lint and type-check
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
