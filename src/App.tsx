@@ -79,6 +79,17 @@ const watermarkPreset: Preset = {
   },
 };
 
+// Decoding a data URL by hand keeps the export synchronous, which the Web
+// Share API's user-activation requirement depends on.
+function dataUrlToBytes(dataUrl: string) {
+  const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 function App() {
   return (
     <div className="mx-auto w-full max-w-[1200px] px-4 pb-16 pt-5 sm:px-6 sm:pt-8 lg:px-8">
@@ -203,10 +214,13 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   }, [loadedImage]);
 
   // Sharing a file payload is mobile-only in practice, so probe support once
-  // rather than offering a button that would throw on the desktop.
+  // rather than offering a button that would throw on the desktop. The probe
+  // carries a byte because WebKit rejects a zero-length file outright.
   useEffect(() => {
-    if (!navigator.canShare) return;
-    const probe = new File([""], "probe.png", { type: "image/png" });
+    if (typeof navigator.canShare !== "function") return;
+    const probe = new File([Uint8Array.of(0)], "probe.png", {
+      type: "image/png",
+    });
     setCanShareFile(navigator.canShare({ files: [probe] }));
   }, []);
 
@@ -752,22 +766,31 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     URL.revokeObjectURL(url);
   };
 
-  const handleShare = async () => {
-    const blob = await renderExportBlob();
-    if (!blob) return;
+  // navigator.share needs the click's transient user activation, and any await
+  // before the call spends it -- Chrome then throws NotAllowedError. So the PNG
+  // is encoded synchronously here rather than through the async toBlob path.
+  const handleShare = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !loadedImage) return;
 
-    const file = new File([blob], downloadFileName, { type: "image/png" });
+    drawCanvas(false);
+    const dataUrl = canvas.toDataURL("image/png");
+    drawCanvas(true);
 
-    try {
-      await navigator.share({ files: [file] });
-    } catch (error) {
-      // Dismissing the share sheet rejects with AbortError, which is not a fault.
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      setNotice({
-        tone: "error",
-        message: "Sharing failed on this device. Download the image instead.",
-      });
+    const file = new File([dataUrlToBytes(dataUrl)], downloadFileName, {
+      type: "image/png",
+    });
+
+    if (navigator.canShare && !navigator.canShare({ files: [file] })) {
+      void handleDownload();
+      return;
     }
+
+    navigator.share({ files: [file] }).catch((error: unknown) => {
+      // Dismissing the share sheet rejects with AbortError, not a failure.
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      void handleDownload();
+    });
   };
 
   const resetSettings = () => {
