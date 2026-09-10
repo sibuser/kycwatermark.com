@@ -214,7 +214,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     return getDownloadFileName(fileName, preset.downloadName);
   }, [fileName, preset.downloadName]);
 
-  const getCanvasPoint = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getCanvasPoint = (e: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
@@ -253,12 +253,17 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     return null;
   };
 
-  // --- Mouse handlers ---
+  // --- Pointer handlers (mouse, touch and pen) ---
 
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerDown = (
+    e: React.PointerEvent<HTMLCanvasElement>,
+  ) => {
     if (!redactEnabled || !loadedImage) return;
     e.preventDefault();
     e.stopPropagation();
+    // Touch has no implicit capture, so claim the pointer explicitly to keep
+    // receiving moves once the finger strays outside the canvas.
+    e.currentTarget.setPointerCapture(e.pointerId);
     const pos = getCanvasPoint(e);
     const hit = findHitTarget(pos.x, pos.y);
 
@@ -269,9 +274,9 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       const r = redactions[hit.index];
       const cx = r.x + r.w / 2;
       const cy = r.y + r.h / 2;
-      const mouseAngle = Math.atan2(pos.x - cx, -(pos.y - cy));
+      const pointerAngle = Math.atan2(pos.x - cx, -(pos.y - cy));
       interactionMode.current = "rotating";
-      dragAngleOffset.current = mouseAngle - r.angle;
+      dragAngleOffset.current = pointerAngle - r.angle;
       dragRectSnapshot.current = { ...r };
       setSelectedIndex(hit.index);
     } else if (
@@ -297,13 +302,17 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     }
   };
 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerMove = (
+    e: React.PointerEvent<HTMLCanvasElement>,
+  ) => {
     const canvas = canvasRef.current;
     if (!canvas || !redactEnabled || !loadedImage) return;
 
     const pos = getCanvasPoint(e);
 
     if (interactionMode.current === "idle") {
+      // Touch and pen report no hover, so cursor feedback is mouse-only.
+      if (e.pointerType !== "mouse") return;
       const hit = findHitTarget(pos.x, pos.y);
       if (hit?.zone === "handle") {
         canvas.style.cursor = "grab";
@@ -351,8 +360,8 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       const snap = dragRectSnapshot.current;
       const cx = snap.x + snap.w / 2;
       const cy = snap.y + snap.h / 2;
-      const mouseAngle = Math.atan2(pos.x - cx, -(pos.y - cy));
-      const newAngle = mouseAngle - dragAngleOffset.current;
+      const pointerAngle = Math.atan2(pos.x - cx, -(pos.y - cy));
+      const newAngle = pointerAngle - dragAngleOffset.current;
       setRedactions((prev) =>
         prev.map((r, i) =>
           i === selectedIndex ? { ...r, angle: newAngle } : r,
@@ -375,7 +384,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     }
   };
 
-  const handleCanvasMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const mode = interactionMode.current;
     if (mode === "idle") return;
     e.preventDefault();
@@ -405,16 +414,26 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     dragRectSnapshot.current = null;
   };
 
+  const handleCanvasPointerCancel = () => {
+    interactionMode.current = "idle";
+    setActiveRect(null);
+    dragRectSnapshot.current = null;
+  };
+
   useEffect(() => {
-    const handleGlobalMouseUp = () => {
+    const handleGlobalPointerEnd = () => {
       if (interactionMode.current !== "idle") {
         interactionMode.current = "idle";
         setActiveRect(null);
         dragRectSnapshot.current = null;
       }
     };
-    window.addEventListener("mouseup", handleGlobalMouseUp);
-    return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
+    window.addEventListener("pointerup", handleGlobalPointerEnd);
+    window.addEventListener("pointercancel", handleGlobalPointerEnd);
+    return () => {
+      window.removeEventListener("pointerup", handleGlobalPointerEnd);
+      window.removeEventListener("pointercancel", handleGlobalPointerEnd);
+    };
   }, []);
 
   useEffect(() => {
@@ -861,10 +880,16 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
             >
               <canvas
                 ref={canvasRef}
-                className="max-h-[68vh] w-full rounded-lg bg-white object-contain shadow-sm"
-                onMouseDown={handleCanvasMouseDown}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseUp={handleCanvasMouseUp}
+                className={cx(
+                  "max-h-[68vh] w-full rounded-lg bg-white object-contain shadow-sm",
+                  // While redacting, the drag belongs to us rather than to
+                  // the browser's scroll and pinch-zoom gestures.
+                  redactEnabled && "touch-none",
+                )}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
+                onPointerCancel={handleCanvasPointerCancel}
               />
               {isDragActive && (
                 <div className="pointer-events-none absolute inset-0 grid place-items-center bg-blue-100/90">
