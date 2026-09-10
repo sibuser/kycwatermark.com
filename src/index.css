@@ -63,31 +63,6 @@
     letter-spacing: 0.14em;
   }
 
-  .trust-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.42rem;
-    border-radius: 999px;
-    border: 1px solid #dbe3ee;
-    background: rgba(255, 255, 255, 0.86);
-    color: #475569;
-    padding: 0.4rem 0.72rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .trust-pill-link {
-    text-decoration: none;
-    transition:
-      border-color 160ms ease,
-      color 160ms ease;
-  }
-
-  .trust-pill-link:hover {
-    border-color: #93c5fd;
-    color: #1d4ed8;
-  }
-
   .action-btn {
     display: inline-flex;
     align-items: center;
