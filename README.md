@@ -102,4 +102,3 @@ pnpm lint
 - TypeScript
 - Vite 7
 - Tailwind CSS 4
-- Cloudflare Pages (via Wrangler)
