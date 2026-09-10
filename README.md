@@ -45,7 +45,52 @@ pnpm build
 pnpm preview
 ```
 
-### Type check
+### Docker
+
+Build and serve the production bundle with nginx on `http://localhost:8080`:
+
+```bash
+docker compose up --build web
+```
+
+Run the Vite dev server with hot reload on `http://localhost:5173`:
+
+```bash
+docker compose --profile dev up --build dev
+```
+
+The image is built without `.git` in the context, so the commit hash shown in the
+footer is passed in as a build argument:
+
+```bash
+COMMIT_HASH=$(git rev-parse --short HEAD) docker compose build web
+```
+
+Plain Docker works too:
+
+```bash
+docker build -t kycwatermark --build-arg COMMIT_HASH="$(git rev-parse --short HEAD)" .
+docker run --rm -p 8080:8080 kycwatermark
+```
+
+### Prebuilt container image
+
+CI publishes a `linux/amd64` image to GitHub Container Registry on every push
+to `main`:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/sibuser/kycwatermark.com:latest
+```
+
+Available tags: `latest`, `main`, and `sha-<full-commit-sha>`.
+
+Build provenance is attested and can be verified with:
+
+```bash
+gh attestation verify oci://ghcr.io/sibuser/kycwatermark.com:latest --repo sibuser/kycwatermark.com
+```
+
+## Type check
 
 ```bash
 pnpm lint

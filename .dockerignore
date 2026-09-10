@@ -1,0 +1,16 @@
+# Keep the build context down to what the Vite build and the nginx image need.
+.git
+.github
+.gitignore
+node_modules
+dist
+.test-build
+tests/artifacts
+docs
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
+wrangler.jsonc
+.DS_Store
+*.log
