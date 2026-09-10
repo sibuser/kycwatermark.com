@@ -10,11 +10,10 @@ import {
 } from "react";
 import cx from "./cx";
 import DownloadIcon from "./icon/DownloadIcon";
-import ExternalLinkIcon from "./icon/ExternalLinkIcon";
-import GitHubIcon from "./icon/GithubIcon";
 import NoUploadIcon from "./icon/NoUploadIcon";
 import PatternIcon from "./icon/PatternIcon";
 import RotateIcon from "./icon/RotateIcon";
+import ShareIcon from "./icon/ShareIcon";
 import TypeIcon from "./icon/TypeIcon";
 import TypographyIcon from "./icon/TypographyIcon";
 import UploadIcon from "./icon/UploadIcon";
@@ -83,129 +82,16 @@ const watermarkPreset: Preset = {
 function App() {
   return (
     <div className="mx-auto w-full max-w-[1200px] px-4 pb-16 pt-5 sm:px-6 sm:pt-8 lg:px-8">
-      <header className="animate-rise-in flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="section-label">KYC Watermark</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
-            Protect a document before sharing it
-          </h1>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <TrustPill
-            icon={<GitHubIcon className="h-4 w-4" />}
-            text="Open source"
-            href="https://github.com/EnriqCG/kycwatermark.com"
-            trailingIcon={<ExternalLinkIcon className="h-3.5 w-3.5" />}
-          />
-          <TrustPill
-            icon={<NoUploadIcon className="h-4 w-4" />}
-            text="Private · No uploads"
-          />
-        </div>
+      <header className="animate-rise-in border-b border-slate-200 pb-5">
+        <p className="section-label">KYC Watermark</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+          Protect a document before sharing it
+        </h1>
       </header>
 
       <main className="mt-6">
         <WatermarkStudio preset={watermarkPreset} />
       </main>
-
-      <section className="content-card mt-14 px-5 py-7 sm:px-8 sm:py-9">
-        <h2 className="section-label">About</h2>
-        <h3 className="mt-2 text-xl font-semibold text-slate-950">
-          What is KYCWatermark.com
-        </h3>
-        <p className="mt-3 text-sm leading-relaxed text-slate-600">
-          KYCWatermark.com is a free, open-source tool that adds visible
-          watermarks to identity documents before you share them. All processing
-          happens locally in your browser. Your files are never uploaded to any
-          server.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          Why watermark your documents?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          When you share ID documents for verification (KYC), adding a
-          purpose-specific watermark like "Only for verification at [Company
-          Name]" helps prevent misuse if the document is leaked or forwarded.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          How it works
-        </h3>
-        <ol className="mt-2 list-inside list-decimal space-y-1 text-sm text-slate-600">
-          <li>Upload or drag your ID image into the website</li>
-          <li>Optionally redact parts of your document</li>
-          <li>Customize the watermark text, opacity, angle, and spacing</li>
-          <li>Download the watermarked image as a PNG</li>
-        </ol>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          Is my data safe?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Yes. Everything runs entirely in your browser. Your image never leaves
-          your device, and no data is sent to any server.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          Is this really free?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Yes. There are no fees, no accounts, and no usage limits. The project
-          is open source and can be publicly audited in{" "}
-          <a
-            href="https://github.com/EnriqCG/kycwatermark.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-blue-700 underline underline-offset-2 transition hover:text-blue-800"
-          >
-            GitHub
-          </a>
-          .
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          What file types can I use?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          PNG, JPG, WebP, and HEIC images.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          Can I use this on my phone?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Yes. The tool works in any modern browser on mobile, tablet, or
-          desktop. No app installation is needed.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          What is the redact feature for?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          It lets you draw black rectangles over sensitive fields (like ID
-          numbers or addresses) before applying the watermark, so you only share
-          what is strictly necessary.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          Who built this and why?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          It was built because sharing raw, unmarked identity documents online
-          is risky. The goal is to give everyone a simple, privacy-first way to
-          protect their documents before sending them out.
-        </p>
-
-        <h3 className="mt-7 text-xl font-semibold text-slate-950">
-          Can I use this for non-KYC documents?
-        </h3>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Absolutely. You can watermark contracts, certificates, invoices, or
-          any image you want to protect from unauthorized reuse.
-        </p>
-      </section>
 
       <footer className="mt-8 text-center text-xs text-slate-400">
         {__COMMIT_HASH__}
@@ -229,6 +115,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("watermarked");
   const [isDragActive, setIsDragActive] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [canShareFile, setCanShareFile] = useState(false);
   const [redactEnabled, setRedactEnabled] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [redactions, setRedactions] = useState<RedactionRect[]>([]);
@@ -314,6 +201,14 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     if (!loadedImage) return "No file loaded";
     return `${loadedImage.naturalWidth} × ${loadedImage.naturalHeight}px`;
   }, [loadedImage]);
+
+  // Sharing a file payload is mobile-only in practice, so probe support once
+  // rather than offering a button that would throw on the desktop.
+  useEffect(() => {
+    if (!navigator.canShare) return;
+    const probe = new File([""], "probe.png", { type: "image/png" });
+    setCanShareFile(navigator.canShare({ files: [probe] }));
+  }, []);
 
   const downloadFileName = useMemo(() => {
     return getDownloadFileName(fileName, preset.downloadName);
@@ -805,27 +700,55 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   });
 
-  const handleDownload = () => {
-    const canvas = canvasRef.current;
-    if (!canvas || !loadedImage) return;
+  // The export canvas doubles as the editor surface, so the redaction handles
+  // are hidden for the encode and redrawn as soon as it finishes.
+  const renderExportBlob = () =>
+    new Promise<Blob | null>((resolve) => {
+      const canvas = canvasRef.current;
+      if (!canvas || !loadedImage) {
+        resolve(null);
+        return;
+      }
 
-    drawCanvas(false);
+      drawCanvas(false);
+      canvas.toBlob(
+        (blob) => {
+          drawCanvas(true);
+          resolve(blob);
+        },
+        "image/png",
+        0.94,
+      );
+    });
 
-    canvas.toBlob(
-      (blob) => {
-        drawCanvas(true);
-        if (!blob) return;
+  const handleDownload = async () => {
+    const blob = await renderExportBlob();
+    if (!blob) return;
 
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = downloadFileName;
-        anchor.click();
-        URL.revokeObjectURL(url);
-      },
-      "image/png",
-      0.94,
-    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = downloadFileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleShare = async () => {
+    const blob = await renderExportBlob();
+    if (!blob) return;
+
+    const file = new File([blob], downloadFileName, { type: "image/png" });
+
+    try {
+      await navigator.share({ files: [file] });
+    } catch (error) {
+      // Dismissing the share sheet rejects with AbortError, which is not a fault.
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setNotice({
+        tone: "error",
+        message: "Sharing failed on this device. Download the image instead.",
+      });
+    }
   };
 
   const resetSettings = () => {
@@ -1135,9 +1058,22 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
             )}
 
             <div className="mt-6 border-t border-slate-200 pt-5">
+              {canShareFile && (
+                <button
+                  type="button"
+                  className="action-btn action-btn-primary mb-2 w-full py-3"
+                  onClick={handleShare}
+                >
+                  <ShareIcon className="h-4 w-4" />
+                  Share protected image
+                </button>
+              )}
               <button
                 type="button"
-                className="action-btn action-btn-primary w-full py-3"
+                className={cx(
+                  "action-btn w-full py-3",
+                  canShareFile ? "action-btn-quiet" : "action-btn-primary",
+                )}
                 onClick={handleDownload}
               >
                 <DownloadIcon className="h-4 w-4" />
@@ -1450,37 +1386,6 @@ function RangeControl({
 
       {footer && <p className="mt-1 text-xs text-slate-500">{footer}</p>}
     </label>
-  );
-}
-
-type TrustPillProps = {
-  icon: ReactNode;
-  text: string;
-  href?: string;
-  trailingIcon?: ReactNode;
-};
-
-function TrustPill({ icon, text, href, trailingIcon }: TrustPillProps) {
-  if (href) {
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="trust-pill trust-pill-link"
-      >
-        {icon}
-        <span>{text}</span>
-        {trailingIcon}
-      </a>
-    );
-  }
-
-  return (
-    <span className="trust-pill">
-      {icon}
-      <span>{text}</span>
-    </span>
   );
 }
 
