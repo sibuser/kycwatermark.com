@@ -73,6 +73,23 @@ docker build -t kycwatermark --build-arg COMMIT_HASH="$(git rev-parse --short HE
 docker run --rm -p 8080:8080 kycwatermark
 ```
 
+### Prebuilt container image
+
+CI publishes a `linux/amd64` image to GitHub Container Registry on every push
+to `main`:
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/sibuser/kycwatermark.com:latest
+```
+
+Available tags: `latest`, `main`, and `sha-<full-commit-sha>`.
+
+Build provenance is attested and can be verified with:
+
+```bash
+gh attestation verify oci://ghcr.io/sibuser/kycwatermark.com:latest --repo sibuser/kycwatermark.com
+```
+
 ## Type check
 
 ```bash
