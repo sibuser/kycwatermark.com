@@ -26,6 +26,7 @@ import {
   getDocumentKind,
   getDownloadFileName,
   getScaleFactor,
+  MAX_FILE_SIZE_MB,
   MAX_PDF_PAGES,
   pointInRect,
   pointOnDeleteHandle,
@@ -963,7 +964,8 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 {isLoading ? "Working…" : "Select file"}
               </span>
               <p className="mt-4 text-xs text-slate-500">
-                PDF, PNG, JPG, WebP or HEIC · up to {MAX_PDF_PAGES} PDF pages
+                PDF, PNG, JPG, WebP or HEIC · up to {MAX_FILE_SIZE_MB}MB and{" "}
+                {MAX_PDF_PAGES} PDF pages
               </p>
               <p className="mt-7 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">
                 <NoUploadIcon className="h-4 w-4" />
