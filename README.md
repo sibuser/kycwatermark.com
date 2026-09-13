@@ -1,6 +1,6 @@
 # KYCWatermark.com
 
-An offline-first web app for adding purpose-specific watermarks to ID and document images directly in the browser.
+An offline-first web app for adding purpose-specific watermarks to ID images and PDF documents directly in the browser.
 
 ## Screenshot
 
@@ -9,6 +9,22 @@ An offline-first web app for adding purpose-specific watermarks to ID and docume
 ## Why
 
 When sharing identity documents for KYC, a visible watermark helps reduce misuse by making it clear the image was shared for a specific purpose. This project exists to provide a quick, private, and customizable way to do that without uploading files to a server.
+
+## PDFs
+
+PDFs up to 30 pages are supported alongside images. Each page is rendered to a
+canvas with pdf.js, watermarked, and written back out with pdf-lib, so the
+export is a flattened PDF: text covered by a redaction box is gone from the file
+rather than merely hidden behind an overlay, and nothing can be selected, copied
+or recovered. The trade-off is that the exported text is no longer searchable.
+
+Redactions are tracked per page, and pdf.js only downloads when a PDF is
+actually opened, so the image workflow is unaffected.
+
+pdf.js needs its character maps, standard fonts and image-decoder wasm at
+runtime. `scripts/copy-pdfjs-assets.mjs` copies them from `node_modules` into
+`public/pdfjs/` and is run automatically by `pnpm dev` and `pnpm build`, which
+keeps the app fully offline instead of reaching for a CDN.
 
 ## Run Locally
 
@@ -102,3 +118,4 @@ pnpm lint
 - TypeScript
 - Vite 7
 - Tailwind CSS 4
+- pdf.js (PDF rendering) and pdf-lib (PDF output)

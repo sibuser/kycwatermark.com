@@ -18,23 +18,28 @@ import TypeIcon from "./icon/TypeIcon";
 import TypographyIcon from "./icon/TypographyIcon";
 import UploadIcon from "./icon/UploadIcon";
 import {
+  type DocumentKind,
   type EdgeZone,
   edgeCursor,
   findEdgeZone,
+  getDocumentFileValidationError,
+  getDocumentKind,
   getDownloadFileName,
-  getEffectiveWatermarkSpacing,
-  getImageFileValidationError,
   getScaleFactor,
+  MAX_PDF_PAGES,
   pointInRect,
   pointOnDeleteHandle,
   pointOnRotationHandle,
   type RedactionRect,
   resizeRect,
-  scaleWatermarkSettings,
   screenToCanvas,
   type WatermarkSettings,
-  wrapWatermarkText,
 } from "./imageLogic";
+import type { DocumentPage } from "./pdf/documentPage";
+import {
+  buildWatermarkRenderOptions,
+  getTextMeasurer,
+} from "./rendering/watermarkLayout";
 import { renderWatermarkedImage } from "./rendering/watermarkRenderer";
 
 declare const __COMMIT_HASH__: string;
@@ -45,6 +50,7 @@ type Preset = {
   hint: string;
   initialSettings: WatermarkSettings;
   downloadName: string;
+  downloadNamePdf: string;
 };
 
 type Notice = {
@@ -60,9 +66,10 @@ type HitZone = "handle" | "delete" | EdgeZone | "body";
 const watermarkPreset: Preset = {
   title: "Document Watermark",
   description:
-    "Add a purpose-specific watermark to ID images without uploading anything. Everything stays local in your browser.",
+    "Add a purpose-specific watermark to ID images and PDFs without uploading anything. Everything stays local in your browser.",
   hint: "Start with low opacity, then tune spacing and offsets so key details remain readable.",
   downloadName: "watermarked-id.png",
+  downloadNamePdf: "watermarked-document.pdf",
   initialSettings: {
     text: "Only for verification at [Company]",
     angle: -32,
@@ -78,6 +85,10 @@ const watermarkPreset: Preset = {
     stagger: 0,
   },
 };
+
+// A stable empty array keeps pages without redactions from invalidating the
+// render memos on every keystroke.
+const NO_REDACTIONS: RedactionRect[] = [];
 
 // Decoding a data URL by hand keeps the export synchronous, which the Web
 // Share API's user-activation requirement depends on.
@@ -121,15 +132,21 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     ...preset.initialSettings,
   });
   const [fileName, setFileName] = useState("");
+  const [documentKind, setDocumentKind] = useState<DocumentKind>("image");
   const [imageUrl, setImageUrl] = useState("");
-  const [loadedImage, setLoadedImage] = useState<HTMLImageElement | null>(null);
+  const [pages, setPages] = useState<DocumentPage[]>([]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("watermarked");
   const [isDragActive, setIsDragActive] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [canShareFile, setCanShareFile] = useState(false);
   const [redactEnabled, setRedactEnabled] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [redactions, setRedactions] = useState<RedactionRect[]>([]);
+  const [redactionsByPage, setRedactionsByPage] = useState<RedactionRect[][]>(
+    [],
+  );
   const [activeRect, setActiveRect] = useState<RedactionRect | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
@@ -141,92 +158,85 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   const dragRectSnapshot = useRef<RedactionRect | null>(null);
   const dragAngleOffset = useRef(0);
   const dragEdge = useRef<EdgeZone>("top");
+  // Loading a PDF is asynchronous, so a slow parse must not overwrite a
+  // document the user picked in the meantime.
+  const loadToken = useRef(0);
+  const measureText = getTextMeasurer();
+
+  const currentPage = pages[pageIndex] ?? null;
+  const redactions = redactionsByPage[pageIndex] ?? NO_REDACTIONS;
+  const totalRedactions = redactionsByPage.reduce(
+    (total, pageRects) => total + pageRects.length,
+    0,
+  );
+
+  const setPageRedactions = useCallback(
+    (update: (current: readonly RedactionRect[]) => RedactionRect[]) => {
+      setRedactionsByPage((all) => {
+        const next = all.slice();
+        while (next.length <= pageIndex) next.push([]);
+        next[pageIndex] = update(next[pageIndex]);
+        return next;
+      });
+    },
+    [pageIndex],
+  );
 
   const scaleFactor = useMemo(() => {
-    if (!loadedImage) return 1;
-    return getScaleFactor(loadedImage.naturalWidth, loadedImage.naturalHeight);
-  }, [loadedImage]);
+    if (!currentPage) return 1;
+    return getScaleFactor(currentPage.width, currentPage.height);
+  }, [currentPage]);
 
-  const {
-    fontSize: scaledFontSize,
-    spacingX: scaledSpacingX,
-    spacingY: scaledSpacingY,
-    lineGap: scaledLineGap,
-    offsetX: scaledOffsetX,
-    offsetY: scaledOffsetY,
-    stagger: scaledStagger,
-  } = scaleWatermarkSettings(settings, scaleFactor);
+  const renderOptions = useMemo(() => {
+    if (!currentPage) return null;
+    return buildWatermarkRenderOptions({
+      width: currentPage.width,
+      height: currentPage.height,
+      scaleFactor,
+      settings,
+      redactions: activeRect ? [...redactions, activeRect] : redactions,
+      watermarked: previewMode === "watermarked",
+      measureText,
+    });
+  }, [
+    activeRect,
+    currentPage,
+    measureText,
+    previewMode,
+    redactions,
+    scaleFactor,
+    settings,
+  ]);
 
-  const fontString = useMemo(
-    () =>
-      `600 ${scaledFontSize}px "Avenir Next", "Sora", "Manrope", "Trebuchet MS", "Segoe UI", sans-serif`,
-    [scaledFontSize],
-  );
+  const lines = renderOptions?.lines ?? [];
+  const effectiveSpacingX = renderOptions?.spacingX ?? 0;
+  const effectiveSpacingY = renderOptions?.spacingY ?? 0;
 
-  const maxLineWidth = useMemo(
-    () => scaledSpacingX - scaledFontSize * 0.6,
-    [scaledSpacingX, scaledFontSize],
-  );
+  const documentStats = useMemo(() => {
+    if (!currentPage) return "No file loaded";
+    const size = `${currentPage.width} × ${currentPage.height}px`;
+    return pages.length > 1 ? `${pages.length} pages · ${size}` : size;
+  }, [currentPage, pages.length]);
 
-  const { lines, textWidth } = useMemo(() => {
-    const text = settings.text.trim();
-    if (!text) return { lines: [], textWidth: 0 };
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-
-    if (!ctx) {
-      return { lines: [text], textWidth: text.length * scaledFontSize * 0.58 };
-    }
-
-    ctx.font = fontString;
-
-    return wrapWatermarkText(
-      text,
-      maxLineWidth,
-      (line) => ctx.measureText(line).width,
-    );
-  }, [settings.text, fontString, maxLineWidth, scaledFontSize]);
-
-  const { spacingX: effectiveSpacingX, spacingY: effectiveSpacingY } = useMemo(
-    () =>
-      getEffectiveWatermarkSpacing(
-        lines,
-        textWidth,
-        scaledFontSize,
-        scaledSpacingX,
-        scaledSpacingY,
-        scaledLineGap,
-      ),
-    [
-      lines,
-      scaledFontSize,
-      scaledLineGap,
-      scaledSpacingX,
-      scaledSpacingY,
-      textWidth,
-    ],
-  );
-
-  const imageStats = useMemo(() => {
-    if (!loadedImage) return "No file loaded";
-    return `${loadedImage.naturalWidth} × ${loadedImage.naturalHeight}px`;
-  }, [loadedImage]);
+  const exportsPdf = documentKind === "pdf";
 
   // Sharing a file payload is mobile-only in practice, so probe support once
   // rather than offering a button that would throw on the desktop. The probe
   // carries a byte because WebKit rejects a zero-length file outright.
   useEffect(() => {
     if (typeof navigator.canShare !== "function") return;
-    const probe = new File([Uint8Array.of(0)], "probe.png", {
-      type: "image/png",
-    });
+    const [name, type] = exportsPdf
+      ? ["probe.pdf", "application/pdf"]
+      : ["probe.png", "image/png"];
+    const probe = new File([Uint8Array.of(0)], name, { type });
     setCanShareFile(navigator.canShare({ files: [probe] }));
-  }, []);
+  }, [exportsPdf]);
 
   const downloadFileName = useMemo(() => {
-    return getDownloadFileName(fileName, preset.downloadName);
-  }, [fileName, preset.downloadName]);
+    return exportsPdf
+      ? getDownloadFileName(fileName, preset.downloadNamePdf, "pdf")
+      : getDownloadFileName(fileName, preset.downloadName, "png");
+  }, [exportsPdf, fileName, preset.downloadName, preset.downloadNamePdf]);
 
   const getCanvasPoint = (e: { clientX: number; clientY: number }) => {
     const canvas = canvasRef.current;
@@ -272,7 +282,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   const handleCanvasPointerDown = (
     e: React.PointerEvent<HTMLCanvasElement>,
   ) => {
-    if (!redactEnabled || !loadedImage) return;
+    if (!redactEnabled || !currentPage) return;
     e.preventDefault();
     e.stopPropagation();
     // Touch has no implicit capture, so claim the pointer explicitly to keep
@@ -320,7 +330,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     e: React.PointerEvent<HTMLCanvasElement>,
   ) => {
     const canvas = canvasRef.current;
-    if (!canvas || !redactEnabled || !loadedImage) return;
+    if (!canvas || !redactEnabled || !currentPage) return;
 
     const pos = getCanvasPoint(e);
 
@@ -361,7 +371,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       const dx = pos.x - dragStart.current.x;
       const dy = pos.y - dragStart.current.y;
       const snap = dragRectSnapshot.current;
-      setRedactions((prev) =>
+      setPageRedactions((prev) =>
         prev.map((r, i) =>
           i === selectedIndex ? { ...r, x: snap.x + dx, y: snap.y + dy } : r,
         ),
@@ -376,7 +386,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       const cy = snap.y + snap.h / 2;
       const pointerAngle = Math.atan2(pos.x - cx, -(pos.y - cy));
       const newAngle = pointerAngle - dragAngleOffset.current;
-      setRedactions((prev) =>
+      setPageRedactions((prev) =>
         prev.map((r, i) =>
           i === selectedIndex ? { ...r, angle: newAngle } : r,
         ),
@@ -392,7 +402,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
         pos,
         dragEdge.current,
       );
-      setRedactions((prev) =>
+      setPageRedactions((prev) =>
         prev.map((r, i) => (i === selectedIndex ? newRect : r)),
       );
     }
@@ -416,10 +426,8 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       };
 
       if (finalRect.w > 3 && finalRect.h > 3) {
-        setRedactions((prev) => {
-          setSelectedIndex(prev.length);
-          return [...prev, finalRect];
-        });
+        setSelectedIndex(redactions.length);
+        setPageRedactions((prev) => [...prev, finalRect]);
       }
       setActiveRect(null);
     }
@@ -472,25 +480,36 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.style.cursor =
-      loadedImage && redactEnabled ? "crosshair" : "default";
-  }, [loadedImage, redactEnabled]);
+      currentPage && redactEnabled ? "crosshair" : "default";
+  }, [currentPage, redactEnabled]);
 
   useEffect(() => {
-    return () => {
-      if (imageUrl) URL.revokeObjectURL(imageUrl);
-    };
+    if (!imageUrl) return;
+    return () => URL.revokeObjectURL(imageUrl);
   }, [imageUrl]);
 
+  // Images still go through an <img> rather than createImageBitmap so the
+  // browser keeps applying EXIF orientation to photos taken on a phone.
   useEffect(() => {
-    if (!imageUrl) {
-      setLoadedImage(null);
-      return;
-    }
+    if (!imageUrl) return;
 
     const image = new Image();
-    image.onload = () => setLoadedImage(image);
+    image.onload = () => {
+      setPages([
+        {
+          source: image,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          pointWidth: image.naturalWidth,
+          pointHeight: image.naturalHeight,
+        },
+      ]);
+      setRedactionsByPage([[]]);
+      setIsLoading(false);
+    };
     image.onerror = () => {
-      setLoadedImage(null);
+      setPages([]);
+      setIsLoading(false);
       setNotice({
         tone: "error",
         message: "Could not decode that image. Try another file.",
@@ -506,35 +525,16 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
 
   const drawCanvas = useCallback(
     (showSelectionUI: boolean) => {
-      if (!loadedImage) return;
+      if (!currentPage || !renderOptions) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
       const context = canvas.getContext("2d");
       if (!context) return;
 
-      canvas.width = loadedImage.naturalWidth;
-      canvas.height = loadedImage.naturalHeight;
+      canvas.width = currentPage.width;
+      canvas.height = currentPage.height;
 
-      const allRects = activeRect ? [...redactions, activeRect] : redactions;
-      renderWatermarkedImage(context, loadedImage, {
-        width: canvas.width,
-        height: canvas.height,
-        watermarked: previewMode === "watermarked",
-        grayscale: settings.grayscale,
-        redactions: allRects,
-        lines,
-        opacity: settings.opacity,
-        color: settings.color,
-        font: fontString,
-        angleDegrees: settings.angle,
-        offsetX: scaledOffsetX,
-        offsetY: scaledOffsetY,
-        spacingX: effectiveSpacingX,
-        spacingY: effectiveSpacingY,
-        fontSize: scaledFontSize,
-        lineGap: scaledLineGap,
-        stagger: scaledStagger,
-      });
+      renderWatermarkedImage(context, currentPage.source, renderOptions);
 
       if (previewMode !== "watermarked") return;
 
@@ -611,22 +611,12 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       }
     },
     [
-      activeRect,
-      effectiveSpacingX,
-      effectiveSpacingY,
-      fontString,
-      lines,
-      loadedImage,
+      currentPage,
       previewMode,
       redactions,
+      renderOptions,
       scaleFactor,
-      scaledFontSize,
-      scaledLineGap,
-      scaledOffsetX,
-      scaledOffsetY,
-      scaledStagger,
       selectedIndex,
-      settings,
     ],
   );
 
@@ -641,29 +631,67 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     setSettings((current) => ({ ...current, [key]: value }));
   };
 
-  const loadImageFile = (file: File | undefined) => {
+  const loadDocumentFile = async (file: File | undefined) => {
     if (!file) return;
 
-    const validationError = getImageFileValidationError(file);
+    const validationError = getDocumentFileValidationError(file);
     if (validationError) {
-      setNotice({
-        tone: "error",
-        message: validationError,
-      });
+      setNotice({ tone: "error", message: validationError });
       return;
     }
 
-    const nextUrl = URL.createObjectURL(file);
+    const kind = getDocumentKind(file) ?? "image";
+    const token = loadToken.current + 1;
+    loadToken.current = token;
 
-    setImageUrl(nextUrl);
-    setFileName(file.name);
-    setRedactions([]);
+    setPages([]);
+    setPageIndex(0);
+    setRedactionsByPage([]);
     setActiveRect(null);
     setSelectedIndex(null);
     interactionMode.current = "idle";
     setPreviewMode("watermarked");
     setRedactEnabled(false);
-    setNotice({ tone: "info", message: `Loaded ${file.name}` });
+    setDocumentKind(kind);
+    setFileName(file.name);
+    setIsLoading(true);
+    setNotice({ tone: "info", message: `Loading ${file.name}…` });
+
+    if (kind === "image") {
+      setImageUrl(URL.createObjectURL(file));
+      return;
+    }
+
+    setImageUrl("");
+    try {
+      const { renderPdfPages } = await import("./pdf/pdfRaster");
+      const pdfPages = await renderPdfPages(
+        await file.arrayBuffer(),
+        MAX_PDF_PAGES,
+      );
+      if (loadToken.current !== token) return;
+
+      setPages(pdfPages);
+      setRedactionsByPage(pdfPages.map(() => []));
+      setNotice({
+        tone: "info",
+        message: `Loaded ${file.name} · ${pdfPages.length} ${
+          pdfPages.length === 1 ? "page" : "pages"
+        }`,
+      });
+    } catch (error) {
+      if (loadToken.current !== token) return;
+      setFileName("");
+      setNotice({
+        tone: "error",
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Could not read that PDF. Try another file.",
+      });
+    } finally {
+      if (loadToken.current === token) setIsLoading(false);
+    }
   };
 
   const openFilePicker = () => {
@@ -671,7 +699,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    loadImageFile(event.target.files?.[0]);
+    void loadDocumentFile(event.target.files?.[0]);
     event.target.value = "";
   };
 
@@ -709,12 +737,12 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     dragDepth.current = 0;
     setIsDragActive(false);
 
-    loadImageFile(event.dataTransfer.files?.[0]);
+    void loadDocumentFile(event.dataTransfer.files?.[0]);
   };
 
   const deleteSelectedRedaction = () => {
     if (selectedIndex === null) return;
-    setRedactions((prev) => prev.filter((_, i) => i !== selectedIndex));
+    setPageRedactions((prev) => prev.filter((_, i) => i !== selectedIndex));
     setSelectedIndex(null);
   };
 
@@ -735,10 +763,10 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
 
   // The export canvas doubles as the editor surface, so the redaction handles
   // are hidden for the encode and redrawn as soon as it finishes.
-  const renderExportBlob = () =>
+  const renderImageBlob = () =>
     new Promise<Blob | null>((resolve) => {
       const canvas = canvasRef.current;
-      if (!canvas || !loadedImage) {
+      if (!canvas || !currentPage) {
         resolve(null);
         return;
       }
@@ -754,10 +782,49 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
       );
     });
 
-  const handleDownload = async () => {
-    const blob = await renderExportBlob();
-    if (!blob) return;
+  // Every PDF page is re-rendered off-screen at its own scale, so the visible
+  // canvas only ever has to hold the page being edited.
+  const renderPageOffscreen = (index: number) => {
+    const page = pages[index];
+    if (!page) return null;
 
+    const canvas = document.createElement("canvas");
+    canvas.width = page.width;
+    canvas.height = page.height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    renderWatermarkedImage(
+      context,
+      page.source,
+      buildWatermarkRenderOptions({
+        width: page.width,
+        height: page.height,
+        scaleFactor: getScaleFactor(page.width, page.height),
+        settings,
+        redactions: redactionsByPage[index] ?? NO_REDACTIONS,
+        watermarked: previewMode === "watermarked",
+        measureText,
+      }),
+    );
+    return canvas;
+  };
+
+  const buildExportBlob = async (): Promise<Blob | null> => {
+    if (pages.length === 0) return null;
+    if (!exportsPdf) return renderImageBlob();
+
+    const { buildWatermarkedPdf } = await import("./pdf/pdfWriter");
+    return buildWatermarkedPdf(
+      pages.map((page, index) => ({
+        pointWidth: page.pointWidth,
+        pointHeight: page.pointHeight,
+        render: () => renderPageOffscreen(index),
+      })),
+    );
+  };
+
+  const saveBlob = (blob: Blob) => {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -766,20 +833,23 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     URL.revokeObjectURL(url);
   };
 
-  // navigator.share needs the click's transient user activation, and any await
-  // before the call spends it -- Chrome then throws NotAllowedError. So the PNG
-  // is encoded synchronously here rather than through the async toBlob path.
-  const handleShare = () => {
-    const canvas = canvasRef.current;
-    if (!canvas || !loadedImage) return;
+  const handleDownload = async () => {
+    setIsExporting(true);
+    try {
+      const blob = await buildExportBlob();
+      if (blob) saveBlob(blob);
+    } catch {
+      setNotice({
+        tone: "error",
+        message: "Could not build the download. Try again.",
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
-    drawCanvas(false);
-    const dataUrl = canvas.toDataURL("image/png");
-    drawCanvas(true);
-
-    const file = new File([dataUrlToBytes(dataUrl)], downloadFileName, {
-      type: "image/png",
-    });
+  const shareBlob = (blob: Blob, type: string) => {
+    const file = new File([blob], downloadFileName, { type });
 
     if (navigator.canShare && !navigator.canShare({ files: [file] })) {
       void handleDownload();
@@ -793,9 +863,54 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
     });
   };
 
+  // navigator.share needs the click's transient user activation, and any await
+  // before the call spends it -- Chrome then throws NotAllowedError. So the PNG
+  // is encoded synchronously here rather than through the async toBlob path.
+  // A PDF cannot be encoded synchronously at all, so that path accepts the risk
+  // and leans on the download fallback when the browser refuses a late share.
+  const handleShare = () => {
+    if (pages.length === 0) return;
+
+    if (exportsPdf) {
+      setIsExporting(true);
+      buildExportBlob()
+        .then((blob) => {
+          if (blob) shareBlob(blob, "application/pdf");
+        })
+        .catch(() => {
+          setNotice({
+            tone: "error",
+            message: "Could not build the PDF. Try again.",
+          });
+        })
+        .finally(() => setIsExporting(false));
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    drawCanvas(false);
+    const dataUrl = canvas.toDataURL("image/png");
+    drawCanvas(true);
+
+    shareBlob(
+      new Blob([dataUrlToBytes(dataUrl)], { type: "image/png" }),
+      "image/png",
+    );
+  };
+
+  const goToPage = (index: number) => {
+    if (index < 0 || index >= pages.length) return;
+    setPageIndex(index);
+    setSelectedIndex(null);
+    setActiveRect(null);
+    interactionMode.current = "idle";
+  };
+
   const resetSettings = () => {
     setSettings({ ...preset.initialSettings });
-    setRedactions([]);
+    setRedactionsByPage(pages.map(() => []));
     setActiveRect(null);
     setSelectedIndex(null);
     interactionMode.current = "idle";
@@ -810,12 +925,12 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
         ref={fileInputRef}
         name="wm-file"
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf,.pdf"
         onChange={handleFileChange}
         className="hidden"
       />
 
-      {!loadedImage ? (
+      {!currentPage ? (
         <section className="content-card overflow-hidden p-4 sm:p-6">
           <button
             type="button"
@@ -826,6 +941,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 : "border-slate-300 bg-slate-50/70 hover:border-blue-400 hover:bg-blue-50/40",
             )}
             onClick={openFilePicker}
+            disabled={isLoading}
             onDragEnter={handleDropAreaDragEnter}
             onDragOver={handleDropAreaDragOver}
             onDragLeave={handleDropAreaDragLeave}
@@ -839,13 +955,15 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 Choose a document
               </h2>
               <p className="mt-2 text-sm text-slate-600">
-                Select an image or drag it here to add a protective watermark.
+                {isLoading
+                  ? "Reading your document in this browser tab…"
+                  : "Select a PDF or an image, or drag it here, to add a protective watermark."}
               </p>
               <span className="action-btn action-btn-primary mt-6">
-                Select image
+                {isLoading ? "Working…" : "Select file"}
               </span>
               <p className="mt-4 text-xs text-slate-500">
-                PNG, JPG, WebP or HEIC
+                PDF, PNG, JPG, WebP or HEIC · up to {MAX_PDF_PAGES} PDF pages
               </p>
               <p className="mt-7 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800">
                 <NoUploadIcon className="h-4 w-4" />
@@ -865,7 +983,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 <p className="section-label">Document preview</p>
                 <p className="mt-1 truncate text-sm font-medium text-slate-700">
                   {fileName}{" "}
-                  <span className="text-slate-400">· {imageStats}</span>
+                  <span className="text-slate-400">· {documentStats}</span>
                 </p>
               </div>
               <fieldset className="segmented-control">
@@ -923,6 +1041,44 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
               )}
             </section>
 
+            {pages.length > 1 && (
+              <nav
+                className="mt-3 flex items-center justify-center gap-3"
+                aria-label="Document pages"
+              >
+                <button
+                  type="button"
+                  className="page-nav-btn"
+                  onClick={() => goToPage(pageIndex - 1)}
+                  disabled={pageIndex === 0}
+                  aria-label="Previous page"
+                >
+                  ‹
+                </button>
+                <p
+                  className="text-sm font-medium text-slate-600"
+                  aria-live="polite"
+                >
+                  Page {pageIndex + 1} of {pages.length}
+                  {redactions.length > 0 && (
+                    <span className="text-slate-400">
+                      {" "}
+                      · {redactions.length} hidden here
+                    </span>
+                  )}
+                </p>
+                <button
+                  type="button"
+                  className="page-nav-btn"
+                  onClick={() => goToPage(pageIndex + 1)}
+                  disabled={pageIndex === pages.length - 1}
+                  aria-label="Next page"
+                >
+                  ›
+                </button>
+              </nav>
+            )}
+
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -930,7 +1086,7 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 onClick={openFilePicker}
               >
                 <UploadIcon className="h-4 w-4" />
-                Change image
+                Change file
               </button>
               <button
                 type="button"
@@ -946,9 +1102,9 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 }}
               >
                 Hide sensitive details
-                {redactions.length > 0 && (
+                {totalRedactions > 0 && (
                   <span className="rounded-full bg-slate-900/10 px-1.5 py-0.5 text-[11px]">
-                    {redactions.length}
+                    {totalRedactions}
                   </span>
                 )}
               </button>
@@ -965,7 +1121,9 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
               </h2>
               <p className="mt-1 text-sm text-slate-600">
                 {redactEnabled
-                  ? "Drag over any information you do not want to share."
+                  ? pages.length > 1
+                    ? "Drag over anything you do not want to share. Each page is covered separately."
+                    : "Drag over any information you do not want to share."
                   : "The recommended settings already provide balanced protection."}
               </p>
             </div>
@@ -978,13 +1136,18 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                 <ol className="mt-2 list-inside list-decimal space-y-2 text-sm leading-relaxed text-amber-900">
                   <li>Drag over a detail to cover it</li>
                   <li>Select a box to move, resize, rotate, or delete it</li>
+                  {pages.length > 1 && <li>Switch pages under the preview</li>}
                   <li>Choose Done when you are finished</li>
                 </ol>
 
                 <p className="mt-4 text-xs font-medium text-amber-800">
-                  {redactions.length === 0
+                  {totalRedactions === 0
                     ? "No details hidden yet"
-                    : `${redactions.length} ${redactions.length === 1 ? "detail" : "details"} hidden`}
+                    : `${totalRedactions} ${totalRedactions === 1 ? "detail" : "details"} hidden${
+                        pages.length > 1
+                          ? ` · ${redactions.length} on this page`
+                          : ""
+                      }`}
                 </p>
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
@@ -993,22 +1156,22 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                     className="action-btn action-btn-quiet"
                     disabled={redactions.length === 0}
                     onClick={() => {
-                      setRedactions((current) => current.slice(0, -1));
+                      setPageRedactions((current) => current.slice(0, -1));
                       setSelectedIndex(null);
                     }}
                   >
-                    Undo last
+                    {pages.length > 1 ? "Undo on page" : "Undo last"}
                   </button>
                   <button
                     type="button"
                     className="action-btn action-btn-quiet"
                     disabled={redactions.length === 0}
                     onClick={() => {
-                      setRedactions([]);
+                      setPageRedactions(() => []);
                       setSelectedIndex(null);
                     }}
                   >
-                    Clear all
+                    {pages.length > 1 ? "Clear page" : "Clear all"}
                   </button>
                 </div>
 
@@ -1111,9 +1274,10 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                   type="button"
                   className="action-btn action-btn-primary mb-2 w-full py-3"
                   onClick={handleShare}
+                  disabled={isExporting}
                 >
                   <ShareIcon className="h-4 w-4" />
-                  Share protected image
+                  Share protected {exportsPdf ? "PDF" : "image"}
                 </button>
               )}
               <button
@@ -1123,12 +1287,17 @@ function WatermarkStudio({ preset }: WatermarkStudioProps) {
                   canShareFile ? "action-btn-quiet" : "action-btn-primary",
                 )}
                 onClick={handleDownload}
+                disabled={isExporting}
               >
                 <DownloadIcon className="h-4 w-4" />
-                Download protected image
+                {isExporting
+                  ? "Preparing…"
+                  : `Download protected ${exportsPdf ? "PDF" : "image"}`}
               </button>
               <p className="mt-2 text-center text-xs text-slate-500">
-                PNG · Processed privately on your device
+                {exportsPdf
+                  ? "Flattened PDF · Processed privately on your device"
+                  : "PNG · Processed privately on your device"}
               </p>
             </div>
           </aside>

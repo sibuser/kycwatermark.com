@@ -231,6 +231,30 @@
     font-size: 0.84rem;
   }
 
+  .page-nav-btn {
+    display: grid;
+    height: 2.1rem;
+    width: 2.1rem;
+    flex-shrink: 0;
+    place-items: center;
+    border: 1px solid #dbe3ee;
+    border-radius: 999px;
+    background: white;
+    color: #334155;
+    font-size: 1.15rem;
+    line-height: 1;
+  }
+
+  .page-nav-btn:hover:not(:disabled) {
+    border-color: #93c5fd;
+    background: #f8fafc;
+  }
+
+  .page-nav-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
   .close-btn {
     display: grid;
     height: 2.25rem;
