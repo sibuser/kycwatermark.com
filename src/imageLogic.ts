@@ -32,7 +32,8 @@ export type Bounds = {
   height: number;
 };
 
-export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+export const MAX_FILE_SIZE_MB = 100;
+export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 export const MAX_PDF_PAGES = 30;
 export const REFERENCE_DIAGONAL = 1000;
 
@@ -140,7 +141,7 @@ export function getDocumentFileValidationError(file: {
     return "Please drop a PDF or an image file (PNG, JPG, WebP, HEIC).";
   }
   if (file.size > MAX_FILE_SIZE_BYTES) {
-    return "File is too large. Keep documents under 20MB.";
+    return `File is too large. Keep documents under ${MAX_FILE_SIZE_MB}MB.`;
   }
   return null;
 }

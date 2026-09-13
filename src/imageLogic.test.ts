@@ -9,6 +9,7 @@ import {
   getEffectiveWatermarkSpacing,
   getScaleFactor,
   MAX_FILE_SIZE_BYTES,
+  MAX_FILE_SIZE_MB,
   pointInRect,
   pointOnDeleteHandle,
   pointOnRotationHandle,
@@ -200,14 +201,14 @@ describe("file behavior", () => {
     ).toBe("Please drop a PDF or an image file (PNG, JPG, WebP, HEIC).");
   });
 
-  it("rejects files over 20MB", () => {
+  it("rejects files over the size limit", () => {
     expect(
       getDocumentFileValidationError({
         type: "image/jpeg",
         name: "id.jpg",
         size: MAX_FILE_SIZE_BYTES + 1,
       }),
-    ).toBe("File is too large. Keep documents under 20MB.");
+    ).toBe(`File is too large. Keep documents under ${MAX_FILE_SIZE_MB}MB.`);
   });
 });
 
