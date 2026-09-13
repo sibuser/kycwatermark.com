@@ -1,4 +1,4 @@
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
 import type { DocumentPage } from "./documentPage";
 
 // Rasterising is what makes redactions real: the exported PDF holds pixels, so
@@ -26,7 +26,10 @@ export async function renderPdfPages(
   maxPages: number,
 ): Promise<DocumentPage[]> {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+  // Vite bundles and names the worker itself, rather than us pointing pdf.js at
+  // a .mjs URL: static hosts commonly serve that extension as
+  // application/octet-stream, which browsers refuse to run as a module.
+  pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
 
   const assetBase = `${import.meta.env.BASE_URL}pdfjs/`;
   const task = pdfjs.getDocument({
