@@ -33,7 +33,10 @@ export type Bounds = {
 };
 
 export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+export const MAX_PDF_PAGES = 30;
 export const REFERENCE_DIAGONAL = 1000;
+
+export type DocumentKind = "image" | "pdf";
 
 export function getScaleFactor(width: number, height: number): number {
   return Math.sqrt(width ** 2 + height ** 2) / REFERENCE_DIAGONAL;
@@ -107,23 +110,37 @@ export function getEffectiveWatermarkSpacing(
 export function getDownloadFileName(
   fileName: string,
   defaultName: string,
+  extension: string,
 ): string {
   if (!fileName) return defaultName;
   const extensionIndex = fileName.lastIndexOf(".");
   const baseName =
     extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
-  return `${baseName}-kyc-watermarked.png`;
+  return `${baseName}-kyc-watermarked.${extension}`;
 }
 
-export function getImageFileValidationError(file: {
+// Browsers occasionally hand over an empty MIME type for a drag-and-dropped
+// PDF, so the extension is the more reliable of the two signals.
+export function getDocumentKind(file: {
   type: string;
+  name: string;
+}): DocumentKind | null {
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+    return "pdf";
+  }
+  return file.type.startsWith("image/") ? "image" : null;
+}
+
+export function getDocumentFileValidationError(file: {
+  type: string;
+  name: string;
   size: number;
 }): string | null {
-  if (!file.type.startsWith("image/")) {
-    return "Please drop a valid image file (PNG, JPG, WebP, HEIC).";
+  if (!getDocumentKind(file)) {
+    return "Please drop a PDF or an image file (PNG, JPG, WebP, HEIC).";
   }
   if (file.size > MAX_FILE_SIZE_BYTES) {
-    return "Image is too large. Keep files under 20MB.";
+    return "File is too large. Keep documents under 20MB.";
   }
   return null;
 }

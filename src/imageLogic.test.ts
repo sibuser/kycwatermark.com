@@ -3,9 +3,10 @@ import { describe, it } from "node:test";
 import {
   edgeCursor,
   findEdgeZone,
+  getDocumentFileValidationError,
+  getDocumentKind,
   getDownloadFileName,
   getEffectiveWatermarkSpacing,
-  getImageFileValidationError,
   getScaleFactor,
   MAX_FILE_SIZE_BYTES,
   pointInRect,
@@ -138,41 +139,75 @@ describe("file behavior", () => {
     [".passport", ".passport-kyc-watermarked.png"],
   ] as const) {
     it(`derives a download name from ${input}`, () => {
-      expect(getDownloadFileName(input, "watermarked-id.png")).toBe(expected);
+      expect(getDownloadFileName(input, "watermarked-id.png", "png")).toBe(
+        expected,
+      );
     });
   }
 
+  it("keeps the pdf extension for a pdf export", () => {
+    expect(
+      getDownloadFileName("contract.pdf", "watermarked-document.pdf", "pdf"),
+    ).toBe("contract-kyc-watermarked.pdf");
+  });
+
   it("uses the preset name before a file is loaded", () => {
-    expect(getDownloadFileName("", "watermarked-id.png")).toBe(
+    expect(getDownloadFileName("", "watermarked-id.png", "png")).toBe(
       "watermarked-id.png",
     );
   });
 
+  for (const [type, name, expected] of [
+    ["image/png", "id.png", "image"],
+    ["application/pdf", "contract.pdf", "pdf"],
+    // Some browsers report no MIME type for a dropped file.
+    ["", "CONTRACT.PDF", "pdf"],
+    ["", "id.png", null],
+    ["text/plain", "notes.txt", null],
+  ] as const) {
+    it(`classifies ${name} (${type || "no type"}) as ${expected}`, () => {
+      expect(getDocumentKind({ type, name })).toBe(expected);
+    });
+  }
+
   it("accepts image MIME types at exactly the size limit", () => {
     expect(
-      getImageFileValidationError({
+      getDocumentFileValidationError({
         type: "image/png",
+        name: "id.png",
         size: MAX_FILE_SIZE_BYTES,
       }),
     ).toBeNull();
   });
 
-  it("rejects non-image MIME types before considering size", () => {
+  it("accepts PDFs", () => {
     expect(
-      getImageFileValidationError({
+      getDocumentFileValidationError({
         type: "application/pdf",
-        size: MAX_FILE_SIZE_BYTES + 1,
+        name: "contract.pdf",
+        size: MAX_FILE_SIZE_BYTES,
       }),
-    ).toBe("Please drop a valid image file (PNG, JPG, WebP, HEIC).");
+    ).toBeNull();
   });
 
-  it("rejects image files over 20MB", () => {
+  it("rejects unsupported types before considering size", () => {
     expect(
-      getImageFileValidationError({
-        type: "image/jpeg",
+      getDocumentFileValidationError({
+        type: "text/plain",
+        name: "notes.txt",
         size: MAX_FILE_SIZE_BYTES + 1,
       }),
-    ).toBe("Image is too large. Keep files under 20MB.");
+    ).toBe("Please drop a PDF or an image file (PNG, JPG, WebP, HEIC).");
+  });
+
+  it("rejects files over 20MB", () => {
+    expect(
+      getDocumentFileValidationError({
+        type: "image/jpeg",
+        name: "id.jpg",
+        size: MAX_FILE_SIZE_BYTES + 1,
+      }),
+    ).toBe("File is too large. Keep documents under 20MB.");
   });
 });
 

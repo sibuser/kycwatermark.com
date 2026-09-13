@@ -4,8 +4,8 @@
   "description": "Offline KYC watermark tool",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/copy-pdfjs-assets.mjs && vite",
+    "build": "node scripts/copy-pdfjs-assets.mjs && vite build",
     "preview": "vite preview",
     "test": "npm run test:unit && npm run test:golden",
     "test:unit": "node --test src/imageLogic.test.ts",
@@ -18,6 +18,8 @@
   "packageManager": "pnpm@10.30.1",
   "dependencies": {
     "@tailwindcss/vite": "4.2.4",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.3.289",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "tailwindcss": "4.2.4"
